@@ -24,7 +24,9 @@ public class GenericLayerRepository {
             "traffic-a",
             "transport-a",
             "water-a",
-            "waterways"
+            "waterways",
+            "roads_shenyang",
+            "roads_shenyang_vertices_pgr"
     );
 
     public String load(String table) {

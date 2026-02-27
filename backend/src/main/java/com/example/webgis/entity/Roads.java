@@ -19,7 +19,9 @@ public class Roads {
     private String bridge;
     private String tunnel;
     private String ref;
-
+    private Integer source;
+    private Integer target;
+    private Double length_M;
     @Column(columnDefinition = "geometry(LineString,4326)")
     private LineString geom;
 }

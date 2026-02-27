@@ -40,5 +40,24 @@ export const layers = [
       name: '可达性分析',
       type: 'function', // 标记这是一个功能按钮
       active: false
-    }
+    },
+   {
+       id: 'knn-poi',
+       name: '最近邻 POI 查询',
+       type: 'function',
+       active: false
+     },
+     {
+       id: 'routing',
+       name: '路径规划',
+       type: 'function',
+       active: false
+     },
+     {
+       id: 'route-accessibility',
+       name: '道路通达性分析',
+       type: 'function',
+       active: false
+     }
+
 ]
