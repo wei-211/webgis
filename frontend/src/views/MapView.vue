@@ -5,6 +5,13 @@
     @remove="removeLayer"
     @toggle-function="handleFunction"
   />
+  <div v-if="is3D" class="td-tools">
+      <button @click="flyToShenyang">飞往沈阳</button>
+      <button @click="toggleTerrain">切换地形</button>
+      <button @click="toggle3DBuildings">
+            {{ show3DBuildings ? '隐藏3D建筑' : '显示3D建筑' }}
+      </button>
+    </div>
 
 </template>
 
@@ -19,7 +26,11 @@ import GeoJSON from 'ol/format/GeoJSON'
 import { Stroke, Style, Fill, Circle as CircleStyle } from 'ol/style'
 import { Point, Circle as GeomCircle } from 'ol/geom' // 必须引入几何类型
 import { toLonLat } from 'ol/proj'
-
+import OLCesium from 'ol-cesium'
+import * as Cesium from 'cesium'
+import 'cesium/Build/Cesium/Widgets/widgets.css'
+window.Cesium = Cesium
+window.CESIUM_BASE_URL = '/Cesium/';
 // 业务 API
 import { planRoute } from '@/api/route'
 import { fetchAccessiblePois } from '@/api/accessibility'
@@ -30,6 +41,10 @@ import { fetchPresetRoute } from '@/api/routing'
 let map
 let start = null
 let end = null
+let ol3d = null
+let buildDataSource = null
+const is3D = ref(false)
+const show3DBuildings = ref(false)
 
 const functionState = ref({
   accessibility: false,
@@ -69,7 +84,7 @@ const poiLayer = new VectorLayer({
   source: new VectorSource()
 })
 
-onMounted(() => {
+onMounted(async () => {
   map = new Map({
     target: 'map',
     layers: [
@@ -82,6 +97,7 @@ onMounted(() => {
       zoom: 11
     })
   })
+
   map.on('click', async (evt) => {
     const coord = evt.coordinate
     const [lon, lat] = toLonLat(coord)
@@ -128,6 +144,25 @@ onMounted(() => {
 
 
   })
+  ol3d = new OLCesium({ map: map })
+      // 获取 Cesium 场景对象进行高级配置
+      const scene = ol3d.getCesiumScene()
+      scene.globe.depthTestAgainstTerrain = true // 开启深度检测，防止要素漂浮
+      Cesium.Ion.defaultAccessToken ='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJmNzQyYzQ1OS1lNzZlLTQ3ZjEtYWZiYS1jMDNmZDkyMmJlZWUiLCJpZCI6MzYyNzcxLCJpYXQiOjE3NjM4MDMxMzd9.BtxXup3tsFUchLvrWqWy752dP8lwLRyfp0sVy-t7NPw';
+       try {
+          scene.terrainProvider = await Cesium.createWorldTerrainAsync({
+            requestVertexNormals: true,
+            requestWaterMask: true
+
+          })
+          console.log("地形加载成功")
+
+        } catch (err) {
+          console.error("地形错误:", err)
+          scene.terrainProvider = new Cesium.EllipsoidTerrainProvider()
+          console.log(entity.properties?.getValue())
+        }
+
 })
 
 function addLayer(id, data) {
@@ -136,11 +171,36 @@ function addLayer(id, data) {
     dataProjection: 'EPSG:4326',
     featureProjection: 'EPSG:3857' })
   })
+
+  if (id === 'build') {
+
+    // ===== 1. 创建 2D 图层 =====
+    const layer = new VectorLayer({
+      source,
+      style: new Style({
+        stroke: new Stroke({ color: '#999', width: 1 }),
+        fill: new Fill({ color: 'rgba(200,200,200,0.8)' })
+      })
+    })
+
+    businessLayers[id] = layer
+    map.addLayer(layer)
+    if (is3D.value) {
+
+        waitForViewer(() => {
+          load3DBuildings(source)
+        })
+      }
+      console.log("addLayer id =", id)
+      console.log("is3D.value =", is3D.value)
+    return
+  }
+
   const layer = new VectorLayer({
       source,
       style: new Style({
-        stroke: new Stroke({ color: 'blue', width: 3 }),
-        fill: new Fill({ color: 'rgba(0, 0, 255, 0.1)' }),
+        stroke: new Stroke({ color: id === 'build' ? '#999' : 'blue', width: 1 }),
+        fill: new Fill({ color: id === 'build' ? 'rgba(200, 200, 200, 0.8)' : 'rgba(0, 0, 255, 0.1)' }),
         image: new CircleStyle({ // 针对 POI 点图层的显示
           radius: 5,
           fill: new Fill({ color: 'blue' }),
@@ -153,12 +213,27 @@ function addLayer(id, data) {
     // 2. 真正添加到地图上显示
     map.addLayer(layer);
   console.log("当前source要素数量:", routeLayer.getSource().getFeatures().length)
+
 }
 
 function removeLayer(id) {
+
+  // ===== 1. 删除 2D 图层 =====
   if (businessLayers[id]) {
     map.removeLayer(businessLayers[id])
     delete businessLayers[id]
+  }
+
+  // ===== 2. 删除 3D 图层（如果存在） =====
+  if (id === 'build' && buildDataSource) {
+
+    const scene = ol3d.getCesiumScene()
+
+    if (scene && scene._viewer) {
+      scene._viewer.dataSources.remove(buildDataSource)
+    }
+
+    buildDataSource = null
   }
 }
 
@@ -172,6 +247,23 @@ function handleFunction(layer) {
   //路径规划
     if (layer.id === 'routing' && layer.visible) {
       showAutoRoute();
+    }
+
+    if (layer.id === 'view-3d') {
+
+      is3D.value = layer.visible
+      ol3d.setEnabled(is3D.value)
+
+      if (is3D.value) {
+            waitForViewer(() => {
+              // 核心修复：开启3D时，检查建筑图层是否已存在，若存在则手动补跑拉伸
+              const buildLayer = businessLayers['build'];
+              if (buildLayer) {
+                console.log("检测到已有建筑数据，正在补跑3D拉伸...");
+                load3DBuildings(buildLayer.getSource());
+              }
+            });
+          }
     }
 }
 
@@ -223,14 +315,6 @@ function drawRoute() {
       dataProjection: 'EPSG:4326',
       featureProjection: 'EPSG:3857'
     });
-
-    console.log("OpenLayers 解析出的 Feature 数量:", features.length);
-
-    routeLayer.getSource().addFeatures(features);
-    console.log("source features:", routeLayer.getSource().getFeatures());
-    console.log("feature geometry:", routeLayer.getSource().getFeatures()[0].getGeometry().getCoordinates());
-    console.log("extent:", routeLayer.getSource().getExtent());
-    console.log("Raw coordinates:", res.data.features[0].geometry.coordinates);
     // 自动缩放到路径范围，方便观察是不是飞到了别处
     if (features.length > 0) {
       map.getView().fit(routeLayer.getSource().getExtent(), {
@@ -244,9 +328,125 @@ function drawRoute() {
         }
   })
 }
+function flyToShenyang() {
+  if (ol3d && is3D.value) {
+    ol3d.getCesiumScene().camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(123.43, 41.80, 15000), // 坐标与高度
+      orientation: {
+        pitch: Cesium.Math.toRadians(-90) // 俯视
+      }
+    })
+  }
+}
 
+// 切换地形可见性
+let terrainActive = true
+async function toggleTerrain() {
+  if (!ol3d) return
+
+  const scene = ol3d.getCesiumScene()
+  terrainActive = !terrainActive
+
+  try {
+    if (terrainActive) {
+      scene.terrainProvider = await Cesium.createWorldTerrainAsync({
+        requestVertexNormals: true,
+        requestWaterMask: true
+      })
+      console.log("地形开启")
+    } else {
+      scene.terrainProvider = new Cesium.EllipsoidTerrainProvider()
+      console.log("地形关闭")
+    }
+  } catch (e) {
+    console.error("地形切换失败:", e)
+  }
+}
+
+function load3DBuildings(source) {
+  const features = source.getFeatures();
+  console.log("--- 函数已运行，待拉伸要素数量:", features.length);
+
+  const scene = ol3d.getCesiumScene();
+  if (!scene) return; // 移除对 _viewer 的检查
+
+  // 1. 获取 ol-cesium 管理的数据源集合
+  const dataSources = ol3d.getDataSources();
+
+  // 2. 将 OpenLayers 要素转为 GeoJSON
+  const geojson = new GeoJSON().writeFeaturesObject(
+    features,
+    {
+      featureProjection: 'EPSG:3857',
+      dataProjection: 'EPSG:4326'
+    }
+  );
+
+  // 3. 加载到 Cesium
+  Cesium.GeoJsonDataSource.load(geojson).then(dataSource => {
+    // 如果之前已经存在旧的建筑数据源，先移除
+    if (buildDataSource) {
+      dataSources.remove(buildDataSource);
+    }
+
+    dataSources.add(dataSource);
+    buildDataSource = dataSource;
+
+    // 4. 遍历实体并设置拉伸高度
+    dataSource.entities.values.forEach(entity => {
+      if (entity.polygon) {
+        // 1. 设置高度参考系为相对于地面
+        entity.polygon.heightReference = Cesium.HeightReference.RELATIVE_TO_GROUND;
+        entity.polygon.extrudedHeightReference = Cesium.HeightReference.RELATIVE_TO_GROUND;
+        entity.polygon.height = 0;
+        // 2. height = 0 表示底部紧贴地面
+        let rawHeight = entity.properties.height ? entity.properties.height.getValue() : 20;
+        entity.polygon.extrudedHeight = rawHeight;
+        // 3. 设置一个合理的拉伸高度（例如 30 到 50 米）
+        if (rawHeight > 50) {
+                entity.polygon.material = Cesium.Color.fromCssColorString('#4a90e2').withAlpha(0.8);
+            } else {
+                entity.polygon.material = Cesium.Color.BLUE.withAlpha(0.8);
+            }
+
+            entity.polygon.outline = true;
+            entity.polygon.outlineColor = Cesium.Color.BLUE.withAlpha(0.3);
+          }
+    });
+
+    console.log("--- 3D建筑拉伸逻辑执行完毕 ---");
+  }).catch(err => {
+    console.error("Cesium 加载 GeoJSON 失败:", err);
+  });
+}
+
+function waitForViewer(callback) {
+  const check = () => {
+    // 只要 ol3d 实例和 scene 准备好了就可以执行
+    const scene = ol3d ? ol3d.getCesiumScene() : null;
+    if (scene) {
+      callback();
+    } else {
+      requestAnimationFrame(check);
+    }
+  };
+  check();
+}
 </script>
 
 <style scoped>
 #map { width: 100vw; height: 100vh; }
+.td-tools {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  background: white;
+  padding: 10px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+button { cursor: pointer; padding: 4px 8px; }
 </style>

@@ -33,7 +33,8 @@ export const layers = [
     id: 'build',
     name: '建筑',
     type: 'display',
-    table: 'build'
+    table: 'build',
+    isBuilding: true
   },
   {
       id: 'accessibility',
@@ -54,10 +55,10 @@ export const layers = [
        active: false
      },
      {
-       id: 'route-accessibility',
-       name: '道路通达性分析',
-       type: 'function',
-       active: false
-     }
+         id: 'view-3d',
+         name: '3D 视图模式',
+         type: 'function',
+         active: false
+       }
 
 ]
