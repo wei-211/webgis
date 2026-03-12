@@ -11,7 +11,6 @@ public class RoutingRepository {
     private JdbcTemplate jdbcTemplate;
 
         public String getAutoRoute() {
-            // 这里使用你之前测试成功的那两个点对应的坐标，或者直接通过 ID 查询
             String sql = """
     WITH route_details AS (
         SELECT d.seq, r.wkb_geometry

@@ -11,11 +11,21 @@
       <button @click="toggle3DBuildings">
             {{ show3DBuildings ? '隐藏3D建筑' : '显示3D建筑' }}
       </button>
+      <div class="tool-group">
+        <label>日照时间模拟 ({{ shadowTime }}:00)</label>
+        <input type="range" min="0" max="24" step="1" v-model="shadowTime" @input="updateShadowTime">
+        <button @click="toggleShadows">{{ isShadowActive ? '关闭日照' : '开启日照' }}</button>
+      </div>
+      <div class="tool-group">
+        <label>淹没分析 (当前水位: {{ waterLevel }}m)</label>
+        <button @click="startFlood">{{ isFlooding ? '停止淹没' : '开始淹没' }}</button>
+      </div>
     </div>
 
 </template>
 
 <script setup>
+import XYZ from 'ol/source/XYZ'
 import { onMounted, ref } from 'vue'
 import { Map, View, Feature } from 'ol' // 必须引入 Feature
 import TileLayer from 'ol/layer/Tile'
@@ -43,8 +53,11 @@ let start = null
 let end = null
 let ol3d = null
 let buildDataSource = null
+let currentCesiumTime = Cesium.JulianDate.now()
+let floodDataSource = new Cesium.CustomDataSource('flood')
 const is3D = ref(false)
 const show3DBuildings = ref(false)
+const TDT_TK ='24f06bfc85c85fc8114b3b65901416d7'
 
 const functionState = ref({
   accessibility: false,
@@ -87,8 +100,17 @@ const poiLayer = new VectorLayer({
 onMounted(async () => {
   map = new Map({
     target: 'map',
-    layers: [
-      new TileLayer({ source: new OSM() }),
+        layers: [
+          new TileLayer({
+            source: new XYZ({
+              url: `http://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`
+            })
+          }),
+          new TileLayer({
+            source: new XYZ({
+              url: `http://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`
+            })
+          }),
       routeLayer,
       poiLayer
     ],
@@ -144,7 +166,10 @@ onMounted(async () => {
 
 
   })
-  ol3d = new OLCesium({ map: map })
+  ol3d = new OLCesium({
+      map: map,
+      time: () => currentCesiumTime
+       })
       // 获取 Cesium 场景对象进行高级配置
       const scene = ol3d.getCesiumScene()
       scene.globe.depthTestAgainstTerrain = true // 开启深度检测，防止要素漂浮
@@ -411,6 +436,7 @@ function load3DBuildings(source) {
 
             entity.polygon.outline = true;
             entity.polygon.outlineColor = Cesium.Color.BLUE.withAlpha(0.3);
+            entity.polygon.shadows = Cesium.ShadowMode.CAST_AND_RECEIVE;
           }
     });
 
@@ -432,6 +458,93 @@ function waitForViewer(callback) {
   };
   check();
 }
+
+ const isShadowActive = ref(false)
+ const shadowTime = ref(12) // 默认中午 12 点
+
+ // 开启/关闭日照与阴影
+ function toggleShadows() {
+   const scene = ol3d.getCesiumScene()
+   if (!scene) return
+
+   isShadowActive.value = !isShadowActive.value
+
+   // 直接操作 globe 和 shadowMap
+   scene.globe.enableLighting = isShadowActive.value
+   scene.shadowMap.enabled = isShadowActive.value
+
+   if (isShadowActive.value) {
+     updateShadowTime()
+   } else {
+     // 关闭时重置时间为当前实际时间
+     currentCesiumTime = Cesium.JulianDate.now()
+   }
+ }
+
+ function updateShadowTime() {
+   if (!isShadowActive.value) return
+
+   const today = new Date()
+   const utcHour = (shadowTime.value - 8 + 24) % 24
+   const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T${String(utcHour).padStart(2, '0')}:00:00Z`
+
+   // 更新全局时间，ol3d的内部渲染循环会自动读取它
+   currentCesiumTime = Cesium.JulianDate.fromIso8601(dateString)
+ }
+
+ const isFlooding = ref(false)
+ const waterLevel = ref(0)
+ let floodEntity = null
+ let floodTimer = null
+
+ function startFlood() {
+   const scene = ol3d.getCesiumScene()
+   if (!scene) return
+
+   isFlooding.value = !isFlooding.value
+
+   if (isFlooding.value) {
+     waterLevel.value = 100 // 重置水位
+
+     // 确保我们将自定义的 dataSource 加入到了场景的数据源集合中
+     if (!ol3d.getDataSources().contains(floodDataSource)) {
+       ol3d.getDataSources().add(floodDataSource)
+     }
+
+     if (!floodEntity) {
+       // 在自定义数据源上挂载实体，而不是 viewer
+       floodEntity = floodDataSource.entities.add({
+         polygon: {
+           // 你可以稍微扩大包围盒以覆盖大片区域
+           hierarchy: Cesium.Cartesian3.fromDegreesArray([
+             123.0, 41.5,
+             124.0, 41.5,
+             124.0, 42.0,
+             123.0, 42.0
+           ]),
+           extrudedHeight: new Cesium.CallbackProperty(() => waterLevel.value, false),
+           height: 0,
+           material: Cesium.Color.fromCssColorString('#00BFFF').withAlpha(0.6),
+           perPositionHeight: false
+         }
+       })
+     }
+
+     floodTimer = setInterval(() => {
+       if (waterLevel.value >= 1000) {
+         clearInterval(floodTimer)
+         return
+       }
+       waterLevel.value += 0.5
+     }, 100)
+
+   } else {
+         if (floodTimer) {
+           clearInterval(floodTimer)
+           floodTimer = null
+         }
+         }
+ }
 </script>
 
 <style scoped>
@@ -449,4 +562,15 @@ function waitForViewer(callback) {
   gap: 8px;
 }
 button { cursor: pointer; padding: 4px 8px; }
+.tool-group {
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.tool-group label {
+  font-size: 12px;
+  color: #333;
+}
 </style>
