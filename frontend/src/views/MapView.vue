@@ -5,49 +5,72 @@
     @remove="removeLayer"
     @toggle-function="handleFunction"
   />
+
   <div v-if="is3D" class="td-tools">
       <button @click="flyToShenyang">飞往沈阳</button>
       <button @click="toggleTerrain">切换地形</button>
       <button @click="toggle3DBuildings">
             {{ show3DBuildings ? '隐藏3D建筑' : '显示3D建筑' }}
       </button>
+
+      <div class="tool-group">
+        <label>空间量测</label>
+        <div style="display: flex; gap: 5px;">
+          <button @click="startMeasure('LineString')" style="flex: 1;">测距</button>
+          <button @click="startMeasure('Polygon')" style="flex: 1;">测面积</button>
+        </div>
+      </div>
+
       <div class="tool-group">
         <label>日照时间模拟 ({{ shadowTime }}:00)</label>
         <input type="range" min="0" max="24" step="1" v-model="shadowTime" @input="updateShadowTime">
         <button @click="toggleShadows">{{ isShadowActive ? '关闭日照' : '开启日照' }}</button>
       </div>
       <div class="tool-group">
-        <label>淹没分析 (当前水位: {{ waterLevel }}m)</label>
+        <label>淹没分析 (当前水位: {{ waterLevel-60 }}m)</label>
         <button @click="startFlood">{{ isFlooding ? '停止淹没' : '开始淹没' }}</button>
       </div>
-    </div>
+  </div>
 
+  <div class="map-controls">
+     <button @click="resetNorth" title="恢复正北">N</button>
+     <button @click="zoomIn" title="放大">+</button>
+     <button @click="zoomOut" title="缩小">-</button>
+     <button @click="locateMe" title="回到沈阳">📍</button>
+  </div>
+
+  <div id="mouse-position" class="mouse-coord"></div>
 </template>
 
 <script setup>
 import XYZ from 'ol/source/XYZ'
+import 'ol/ol.css'
 import { onMounted, ref } from 'vue'
-import { Map, View, Feature } from 'ol' // 必须引入 Feature
+import { Map, View, Feature } from 'ol'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
 import OSM from 'ol/source/OSM'
 import VectorSource from 'ol/source/Vector'
 import GeoJSON from 'ol/format/GeoJSON'
 import { Stroke, Style, Fill, Circle as CircleStyle } from 'ol/style'
-import { Point, Circle as GeomCircle } from 'ol/geom' // 必须引入几何类型
+import { Point, Circle as GeomCircle, Polygon, LineString } from 'ol/geom'
 import { toLonLat } from 'ol/proj'
 import OLCesium from 'ol-cesium'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 window.Cesium = Cesium
 window.CESIUM_BASE_URL = '/Cesium/';
-// 业务 API
+import { Draw } from 'ol/interaction'
+import { getLength, getArea } from 'ol/sphere'
+import { ScaleLine, MousePosition, ZoomSlider } from 'ol/control';
+import { createStringXY } from 'ol/coordinate';
+
 import { planRoute } from '@/api/route'
 import { fetchAccessiblePois } from '@/api/accessibility'
 import LayerPanel from '@/components/LayerPanel.vue'
 import { fetchPresetRoute } from '@/api/routing'
 
-// 状态管理
+
 let map
 let start = null
 let end = null
@@ -55,6 +78,11 @@ let ol3d = null
 let buildDataSource = null
 let currentCesiumTime = Cesium.JulianDate.now()
 let floodDataSource = new Cesium.CustomDataSource('flood')
+let drawInteraction;
+let measureHandler = null
+let measure3DDataSource = new Cesium.CustomDataSource('measure3D')
+let isMeasuring3D = false
+
 const is3D = ref(false)
 const show3DBuildings = ref(false)
 const TDT_TK ='24f06bfc85c85fc8114b3b65901416d7'
@@ -66,9 +94,9 @@ const functionState = ref({
   'route-accessibility': false
 })
 
-const businessLayers = {} // 必须定义，解决之前移除图层的报错
+const businessLayers = {}
 
-// 1. 样式定义
+
 const rangeStyle = new Style({
   stroke: new Stroke({ color: 'rgba(0, 153, 255, 1)', width: 2 }),
   fill: new Fill({ color: 'rgba(0, 153, 255, 0.1)' })
@@ -82,7 +110,7 @@ const pointStyle = new Style({
   })
 })
 
-// 2. 图层准备
+
 const routeLayer = new VectorLayer({
   source: new VectorSource(),
   style: new Style({
@@ -97,25 +125,43 @@ const poiLayer = new VectorLayer({
   source: new VectorSource()
 })
 
+  const measureSource = new VectorSource();
+  const measureLayer = new VectorLayer({
+    source: measureSource,
+    style: new Style({
+      fill: new Fill({ color: 'rgba(255, 255, 255, 0.2)' }),
+      stroke: new Stroke({ color: '#ffcc33', width: 2 }),
+      image: new CircleStyle({ radius: 7, fill: new Fill({ color: '#ffcc33' }) })
+    })
+  });
 onMounted(async () => {
   map = new Map({
-    target: 'map',
-        layers: [
-          new TileLayer({
-            source: new XYZ({
-              url: `http://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`
-            })
+      target: 'map',
+      layers: [
+        new TileLayer({ source: new XYZ({ url: `http://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}` }) }),
+        new TileLayer({ source: new XYZ({ url: `http://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}` }) }),
+        routeLayer,
+        poiLayer
+      ],
+      controls: [
+          new ScaleLine({
+            className: 'custom-scale-line',
+             units: 'metric',
+             bar: true,        // 显示刻度条
+             steps: 4,         // 刻度数量
+             text: true,       // 显示文字
+             minWidth: 140     // 最小宽度
           }),
-          new TileLayer({
-            source: new XYZ({
-              url: `http://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`
-            })
-          }),
-      routeLayer,
-      poiLayer
-    ],
+          new ZoomSlider(),
+          new MousePosition({
+            coordinateFormat: createStringXY(4),
+            projection: 'EPSG:4326',
+            className: 'custom-mouse-position',
+            target: document.getElementById('mouse-position'),
+          })
+        ],
     view: new View({
-      center: [13750000, 5130000],
+      center: [13741313, 5130280],
       zoom: 11
     })
   })
@@ -164,7 +210,6 @@ onMounted(async () => {
       return
     }
 
-
   })
   ol3d = new OLCesium({
       map: map,
@@ -198,28 +243,28 @@ function addLayer(id, data) {
   })
 
   if (id === 'build') {
-
-    // ===== 1. 创建 2D 图层 =====
-    const layer = new VectorLayer({
-      source,
-      style: new Style({
-        stroke: new Stroke({ color: '#999', width: 1 }),
-        fill: new Fill({ color: 'rgba(200,200,200,0.8)' })
-      })
-    })
-
-    businessLayers[id] = layer
-    map.addLayer(layer)
-    if (is3D.value) {
-
-        waitForViewer(() => {
-          load3DBuildings(source)
+      const layer = new VectorLayer({
+        source,
+        style: new Style({
+          stroke: new Stroke({ color: '#999', width: 1 }),
+          fill: new Fill({ color: 'rgba(200,200,200,0.8)' })
         })
-      }
-      console.log("addLayer id =", id)
-      console.log("is3D.value =", is3D.value)
-    return
-  }
+      })
+
+      // 【优化核心 1】：把原始的 GeoJSON 数据挂载到图层对象上存起来！
+      layer.rawData = typeof data === 'string' ? JSON.parse(data) : data;
+
+      businessLayers[id] = layer
+      map.addLayer(layer)
+
+      if (is3D.value) {
+          waitForViewer(() => {
+            // 【优化核心 2】：不再传 source，直接传最原始的数据！
+            preload3DBuildings(layer.rawData)
+          })
+        }
+      return
+    }
 
   const layer = new VectorLayer({
       source,
@@ -279,15 +324,20 @@ function handleFunction(layer) {
       is3D.value = layer.visible
       ol3d.setEnabled(is3D.value)
 
-      if (is3D.value) {
-            waitForViewer(() => {
-              // 核心修复：开启3D时，检查建筑图层是否已存在，若存在则手动补跑拉伸
-              const buildLayer = businessLayers['build'];
-              if (buildLayer) {
-                console.log("检测到已有建筑数据，正在补跑3D拉伸...");
-                load3DBuildings(buildLayer.getSource());
-              }
-            });
+      if (layer.id === 'view-3d') {
+            is3D.value = layer.visible
+            ol3d.setEnabled(is3D.value)
+
+            if (is3D.value) {
+                  waitForViewer(() => {
+                    const buildLayer = businessLayers['build'];
+                    // 【优化核心 3】：如果图层存在，且有我们刚才存的 rawData，直接传入
+                    if (buildLayer && buildLayer.rawData) {
+                      console.log("检测到已有建筑数据，正在后台预加载3D模型...");
+                      preload3DBuildings(buildLayer.rawData);
+                    }
+                  });
+                }
           }
     }
 }
@@ -387,63 +437,56 @@ async function toggleTerrain() {
     console.error("地形切换失败:", e)
   }
 }
-
-function load3DBuildings(source) {
-  const features = source.getFeatures();
-  console.log("--- 函数已运行，待拉伸要素数量:", features.length);
+function preload3DBuildings(geojsonData) {
+  if (buildDataSource) return;
 
   const scene = ol3d.getCesiumScene();
-  if (!scene) return; // 移除对 _viewer 的检查
+  if (!scene) return;
 
-  // 1. 获取 ol-cesium 管理的数据源集合
-  const dataSources = ol3d.getDataSources();
+  console.log("🚀 开始极速解析 3D 建筑...");
+  const startTime = performance.now();
 
-  // 2. 将 OpenLayers 要素转为 GeoJSON
-  const geojson = new GeoJSON().writeFeaturesObject(
-    features,
-    {
-      featureProjection: 'EPSG:3857',
-      dataProjection: 'EPSG:4326'
-    }
-  );
-
-  // 3. 加载到 Cesium
-  Cesium.GeoJsonDataSource.load(geojson).then(dataSource => {
-    // 如果之前已经存在旧的建筑数据源，先移除
-    if (buildDataSource) {
-      dataSources.remove(buildDataSource);
-    }
-
-    dataSources.add(dataSource);
+  // 直接使用原始的、已经是 EPSG:4326 经纬度的 GeoJSON 数据！
+  Cesium.GeoJsonDataSource.load(geojsonData).then(dataSource => {
+    ol3d.getDataSources().add(dataSource);
     buildDataSource = dataSource;
 
-    // 4. 遍历实体并设置拉伸高度
+    buildDataSource.show = false;
+
+    dataSource.entities.suspendEvents();
     dataSource.entities.values.forEach(entity => {
       if (entity.polygon) {
-        // 1. 设置高度参考系为相对于地面
-        entity.polygon.heightReference = Cesium.HeightReference.RELATIVE_TO_GROUND;
-        entity.polygon.extrudedHeightReference = Cesium.HeightReference.RELATIVE_TO_GROUND;
-        entity.polygon.height = 0;
-        // 2. height = 0 表示底部紧贴地面
-        let rawHeight = entity.properties.height ? entity.properties.height.getValue() : 20;
-        entity.polygon.extrudedHeight = rawHeight;
-        // 3. 设置一个合理的拉伸高度（例如 30 到 50 米）
-        if (rawHeight > 50) {
-                entity.polygon.material = Cesium.Color.fromCssColorString('#4a90e2').withAlpha(0.8);
-            } else {
-                entity.polygon.material = Cesium.Color.BLUE.withAlpha(0.8);
-            }
+        if (entity.polygon) {
+            const baseHeight = 45; // 沈阳地表海拔
+            const buildingHeight = entity.properties.height ? parseFloat(entity.properties.height.getValue()) : 20;
 
-            entity.polygon.outline = true;
-            entity.polygon.outlineColor = Cesium.Color.BLUE.withAlpha(0.3);
-            entity.polygon.shadows = Cesium.ShadowMode.CAST_AND_RECEIVE;
+            entity.polygon.height = baseHeight;
+            entity.polygon.extrudedHeight = baseHeight + buildingHeight; // 建筑顶端 = 地表 + 楼高
+
+            // 颜色改为灰白色，与蓝水区分
+            entity.polygon.material = Cesium.Color.WHITE.withAlpha(0.8);
           }
-    });
+        }
+      });
+    dataSource.entities.resumeEvents();
 
-    console.log("--- 3D建筑拉伸逻辑执行完毕 ---");
-  }).catch(err => {
-    console.error("Cesium 加载 GeoJSON 失败:", err);
+    const endTime = performance.now();
+    console.log(`✅ 3D建筑加载完毕！耗时: ${((endTime - startTime) / 1000).toFixed(2)} 秒，随时可以秒切！`);
   });
+}
+
+// 2. 按钮点击触发函数 (0秒延迟，瞬间切换！)
+function toggle3DBuildings() {
+  show3DBuildings.value = !show3DBuildings.value;
+
+  if (buildDataSource) {
+    // 直接控制数据源的显隐属性，不需要重新渲染
+    buildDataSource.show = show3DBuildings.value;
+  } else {
+    // 如果用户手速太快，在后台还没加载完就点了按钮
+    alert("3D建筑数据正在后台拼命加载中，请稍等几秒后再试~");
+    show3DBuildings.value = false; // 状态回退
+  }
 }
 
 function waitForViewer(callback) {
@@ -483,72 +526,233 @@ function waitForViewer(callback) {
 
  function updateShadowTime() {
    if (!isShadowActive.value) return
+    const bjHour = parseFloat(shadowTime.value)
 
-   const today = new Date()
-   const utcHour = (shadowTime.value - 8 + 24) % 24
-   const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T${String(utcHour).padStart(2, '0')}:00:00Z`
+      // 获取当前日期，并将时间归零到当天的 00:00:00
+      const date = new Date()
+      date.setHours(0, 0, 0, 0)
 
-   // 更新全局时间，ol3d的内部渲染循环会自动读取它
-   currentCesiumTime = Cesium.JulianDate.fromIso8601(dateString)
- }
+      // 核心修正算法：
+      // 1. 北京时间 -> UTC 时间 (减去 8 小时)
+      // 2. 沈阳(123°43'E)地方太阳时修正：比120°E早约 14.8 分钟。
+      // 为了让输入框的12:00正好对应沈阳的正午，UTC时间需要额外减去这14.8分钟的偏差。
+      const timeDifferenceMs = (bjHour + 2 ) * 3600000 - (14.8 * 60000)
 
+      // 生成最终的 UTC 时间戳
+      const finalUtcMs = date.getTime() + timeDifferenceMs
+
+      // 赋值给 Cesium
+      currentCesiumTime = Cesium.JulianDate.fromDate(new Date(finalUtcMs))
+
+      // 确保场景开启了日照和阴影
+      if (ol3d && ol3d.getCesiumScene()) {
+        const scene = ol3d.getCesiumScene()
+        scene.globe.enableLighting = true
+        scene.shadowMap.darkness = 0.5 // 调整阴影浓度
+      }
+}
  const isFlooding = ref(false)
  const waterLevel = ref(0)
  let floodEntity = null
  let floodTimer = null
 
- function startFlood() {
-   const scene = ol3d.getCesiumScene()
-   if (!scene) return
+function startFlood() {
+  isFlooding.value = !isFlooding.value
 
-   isFlooding.value = !isFlooding.value
+  if (isFlooding.value) {
+    // 【修复1】：正确判断并添加数据源到场景中
+    if (!ol3d.getDataSources().contains(floodDataSource)) {
+      ol3d.getDataSources().add(floodDataSource)
+    }
 
-   if (isFlooding.value) {
-     waterLevel.value = 100 // 重置水位
+    const scene = ol3d.getCesiumScene();
+    // 【修复2】：必须开启深度检测，才能让水面被高地势遮挡，形成淹没效果
+    scene.globe.depthTestAgainstTerrain = true;
 
-     // 确保我们将自定义的 dataSource 加入到了场景的数据源集合中
-     if (!ol3d.getDataSources().contains(floodDataSource)) {
-       ol3d.getDataSources().add(floodDataSource)
+    if (!floodEntity) {
+          floodEntity = floodDataSource.entities.add({
+          polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray([
+            123.2404,41.8736,
+            123.2269,41.6550,
+            123.6232,41.6449,
+            123.6265,41.8741
+          ]),
+
+          height: 40,
+          // 2. 动态改变拉伸高度（水面高度），形成水体体积
+          extrudedHeight: new Cesium.CallbackProperty(() => waterLevel.value, false),
+          material: Cesium.Color.fromCssColorString('#0288D1').withAlpha(0.6),
+          // 3. 必须关闭轮廓线，否则你的眼睛还是会盯着框看
+          outline: false
+        }
+      })
+    }
+
+    waterLevel.value = 40;
+    if (floodTimer) clearInterval(floodTimer);
+
+    floodTimer = setInterval(() => {
+      if (waterLevel.value >= 120) {
+        clearInterval(floodTimer)
+        return
+      }
+      waterLevel.value += 0.5;
+    }, 30)
+
+  } else {
+    // 停止淹没：仅清除定时器，保留水面高度和视觉状态
+    if (floodTimer) {
+      clearInterval(floodTimer)
+      floodTimer = null
+    }
+  }
+}
+ function startMeasure(type) {
+   if (!is3D.value) {
+       if (drawInteraction) map.removeInteraction(drawInteraction);
+       drawInteraction = new Draw({ source: measureSource, type: type });
+       drawInteraction.on('drawend', (evt) => {
+         const geom = evt.feature.getGeometry();
+         let output = type === 'LineString'
+           ? (getLength(geom) / 1000).toFixed(2) + ' km'
+           : (getArea(geom) / 1000000).toFixed(2) + ' km²';
+         alert('2D 测量结果: ' + output);
+         map.removeInteraction(drawInteraction);
+       });
+       map.addInteraction(drawInteraction);
+       return;
      }
 
-     if (!floodEntity) {
-       // 在自定义数据源上挂载实体，而不是 viewer
-       floodEntity = floodDataSource.entities.add({
-         polygon: {
-           // 你可以稍微扩大包围盒以覆盖大片区域
-           hierarchy: Cesium.Cartesian3.fromDegreesArray([
-             123.0, 41.5,
-             124.0, 41.5,
-             124.0, 42.0,
-             123.0, 42.0
-           ]),
-           extrudedHeight: new Cesium.CallbackProperty(() => waterLevel.value, false),
-           height: 0,
-           material: Cesium.Color.fromCssColorString('#00BFFF').withAlpha(0.6),
-           perPositionHeight: false
+     const scene = ol3d.getCesiumScene();
+     if (!scene) return;
+
+     // 将三维量测数据源加入场景
+     if (!ol3d.getDataSources().contains(measure3DDataSource)) {
+       ol3d.getDataSources().add(measure3DDataSource);
+     }
+
+     // 初始化/清理上一次绘制
+     measure3DDataSource.entities.removeAll();
+     if (measureHandler) measureHandler.destroy();
+     isMeasuring3D = true;
+
+     measureHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
+     let positions = []; // 存储三维坐标点
+     let polyObj = null; // 绘制的图形实体
+
+     // A. 鼠标左键点击：打点
+     measureHandler.setInputAction((movement) => {
+       // 获取带地形的准确三维坐标
+       const ray = scene.camera.getPickRay(movement.position);
+       const cartesian = scene.globe.pick(ray, scene);
+
+       if (cartesian) {
+         if (positions.length === 0) {
+           positions.push(cartesian.clone()); // 起点
+           // 画出起点小红球
+           measure3DDataSource.entities.add({
+             position: cartesian,
+             point: { color: Cesium.Color.RED, pixelSize: 6, outlineColor: Cesium.Color.WHITE, outlineWidth: 2 }
+           });
          }
-       })
-     }
+         positions.push(cartesian.clone()); // 加入下一个点（作为鼠标移动的跟随点）
 
-     floodTimer = setInterval(() => {
-       if (waterLevel.value >= 1000) {
-         clearInterval(floodTimer)
-         return
+         // 初始化线或面实体
+         if (!polyObj) {
+           if (type === 'LineString') {
+             polyObj = measure3DDataSource.entities.add({
+               polyline: {
+                 positions: new Cesium.CallbackProperty(() => positions, false),
+                 width: 4,
+                 material: Cesium.Color.YELLOW,
+                 clampToGround: true // 贴地线
+               }
+             });
+           } else {
+             polyObj = measure3DDataSource.entities.add({
+               polygon: {
+                 hierarchy: new Cesium.CallbackProperty(() => new Cesium.PolygonHierarchy(positions), false),
+                 material: Cesium.Color.YELLOW.withAlpha(0.4),
+                 classificationType: Cesium.ClassificationType.TERRAIN // 贴地面
+               },
+               polyline: {
+                 positions: new Cesium.CallbackProperty(() => [...positions, positions[0]], false), // 闭合边界
+                 width: 3,
+                 material: Cesium.Color.YELLOW,
+                 clampToGround: true
+               }
+             });
+           }
+         }
        }
-       waterLevel.value += 0.5
-     }, 100)
+     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-   } else {
-         if (floodTimer) {
-           clearInterval(floodTimer)
-           floodTimer = null
+     // B. 鼠标移动：实现“橡皮筋”跟随效果
+     measureHandler.setInputAction((movement) => {
+       if (positions.length > 0) {
+         const ray = scene.camera.getPickRay(movement.endPosition);
+         const cartesian = scene.globe.pick(ray, scene);
+         if (cartesian) {
+           // 更新数组里的最后一个点为当前鼠标位置
+           positions[positions.length - 1] = cartesian.clone();
          }
+       }
+     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+     // C. 鼠标右键：结束绘制并计算结果
+     measureHandler.setInputAction(() => {
+       isMeasuring3D = false;
+       measureHandler.destroy();
+       measureHandler = null;
+
+       positions.pop(); // 移除最后那个多余的鼠标跟随点
+       if (positions.length < 2) return;
+
+       // ----- 计算结果 -----
+       if (type === 'LineString') {
+         let distance = 0;
+         for (let i = 0; i < positions.length - 1; i++) {
+           distance += Cesium.Cartesian3.distance(positions[i], positions[i+1]);
          }
+         alert(`3D 测距结果: ${distance.toFixed(2)} m`);
+
+       } else {
+         // 测面积：将 Cesium 坐标转换回经纬度，调用 OpenLayers 高精度算法计算
+               const coords = positions.map(p => {
+                 const carto = Cesium.Cartographic.fromCartesian(p);
+                 return [Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)];
+               });
+               coords.push(coords[0]); // 闭合多边形
+
+               const polygonGeom = new Polygon([coords]);
+               // 【修复核心】：明确指定投影为 EPSG:4326
+               const area = getArea(polygonGeom, { projection: 'EPSG:4326' });
+               alert(`3D 测面积结果: ${(area / 1000000).toFixed(2)} Km²`);
+       }
+     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+
+     // 给用户的操作提示
+     alert(`已开启 3D 测量\n操作说明：\n1. 鼠标【左键】点击地图添加点\n2. 鼠标【右键】点击结束并获取结果`);
+
  }
+ function resetNorth() {
+   map.getView().animate({ rotation: 0, duration: 500 });
+  }
+ function zoomIn() {
+   map.getView().animate({ zoom: map.getView().getZoom() + 1, duration: 250 });
+  }
+ function zoomOut() {
+    map.getView().animate({ zoom: map.getView().getZoom() - 1, duration: 250 });
+   }
+ function locateMe() {
+   // 快速定位回沈阳市中心
+   map.getView().animate({ center: [13741313, 5130280], zoom: 12, duration: 1000 });
+  }
 </script>
 
 <style scoped>
-#map { width: 100vw; height: 100vh; }
+#map { width: 100vw; height: 98vh; }
 .td-tools {
   position: absolute;
   right: 20px;
@@ -573,4 +777,46 @@ button { cursor: pointer; padding: 4px 8px; }
   font-size: 12px;
   color: #333;
 }
+
+.map-controls {
+  position: absolute;
+  bottom: 80px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1000; /* 确保在地图上方 */
+}
+
+.map-controls button {
+  width: 40px;
+  height: 40px;
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-controls button:hover {
+  background-color: #f0f0f0;
+}
+
+.mouse-coord {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: monospace;
+  z-index: 1000;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
 </style>
