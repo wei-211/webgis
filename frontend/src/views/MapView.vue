@@ -40,12 +40,21 @@
   </div>
 
   <div id="mouse-position" class="mouse-coord"></div>
+
+  <div ref="infoTooltip" class="info-tooltip" v-show="tooltipData.show" :style="tooltipStyle">
+    <div class="tooltip-header">属性信息</div>
+    <div class="tooltip-body">
+      <div v-for="(val, key) in tooltipData.properties" :key="key">
+        <strong>{{ key }}:</strong> {{ val }}
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
 import XYZ from 'ol/source/XYZ'
 import 'ol/ol.css'
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, reactive, computed } from 'vue'
 import { Map, View, Feature } from 'ol'
 import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
@@ -82,6 +91,23 @@ let drawInteraction;
 let measureHandler = null
 let measure3DDataSource = new Cesium.CustomDataSource('measure3D')
 let isMeasuring3D = false
+// 用于存储 2D 高亮的状态
+let highlightFeature = null;
+// 用于存储 3D 高亮的状态
+let lastPickedEntity = null;
+let lastOriginalMaterial = null;
+const infoTooltip = ref(null)
+const tooltipData = reactive({
+  show: false,
+  properties: {},
+  x: 0,
+  y: 0
+})
+
+const tooltipStyle = computed(() => ({
+  left: `${tooltipData.x + 15}px`,
+  top: `${tooltipData.y + 15}px`
+}))
 
 const is3D = ref(false)
 const show3DBuildings = ref(false)
@@ -232,7 +258,85 @@ onMounted(async () => {
           scene.terrainProvider = new Cesium.EllipsoidTerrainProvider()
           console.log(entity.properties?.getValue())
         }
+  // ===== 3D 悬停交互 (Cesium) =====
+    const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
 
+    handler.setInputAction((movement) => {
+      if (!is3D.value) return;
+
+      // 1. 恢复上一个模型的状态
+      if (lastPickedEntity) {
+        lastPickedEntity.polygon.material = lastOriginalMaterial;
+        lastPickedEntity = null;
+      }
+
+      // 2. 拾取当前模型
+      const pickedObject = scene.pick(movement.endPosition);
+
+      if (Cesium.defined(pickedObject) && pickedObject.id) {
+        const entity = pickedObject.id;
+
+        // 只有带属性的实体（如建筑）才触发
+        if (entity.properties) {
+          lastPickedEntity = entity;
+          lastOriginalMaterial = entity.polygon.material;
+
+          // 高亮：改为亮黄色
+          entity.polygon.material = Cesium.Color.YELLOW.withAlpha(0.7);
+
+          // 显示 Tooltip
+          tooltipData.show = true;
+          tooltipData.x = movement.endPosition.x;
+          tooltipData.y = movement.endPosition.y;
+
+          // 解析属性
+          const props = {};
+          entity.properties.propertyNames.forEach(name => {
+            props[name] = entity.properties[name].getValue();
+          });
+          tooltipData.properties = props;
+
+          document.body.style.cursor = 'pointer';
+        }
+      } else {
+        tooltipData.show = false;
+        document.body.style.cursor = 'default';
+      }
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+
+    // ===== 2D 悬停交互 (OpenLayers) =====
+    map.on('pointermove', (evt) => {
+      if (is3D.value) return; // 3D 模式下跳过 2D 逻辑
+
+      if (highlightFeature) {
+        highlightFeature.setStyle(undefined); // 恢复原有样式
+        highlightFeature = null;
+      }
+
+      const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+
+      if (feature) {
+        highlightFeature = feature;
+        // 设置高亮样式
+        feature.setStyle(new Style({
+          stroke: new Stroke({ color: '#00ffff', width: 3 }),
+          fill: new Fill({ color: 'rgba(0, 255, 255, 0.3)' })
+        }));
+
+        tooltipData.show = true;
+        tooltipData.x = evt.pixel[0];
+        tooltipData.y = evt.pixel[1];
+        tooltipData.properties = feature.getProperties();
+        // 移除 geometry 属性，不显示在 UI 上
+        delete tooltipData.properties.geometry;
+
+        map.getTargetElement().style.cursor = 'pointer';
+      } else {
+        tooltipData.show = false;
+        map.getTargetElement().style.cursor = '';
+      }
+    });
 })
 
 function addLayer(id, data) {
@@ -379,11 +483,7 @@ function drawRoute() {
   const endLL = toLonLat(end);
 
   planRoute(startLL, endLL).then(res => {
-    console.log("收到路段总数:", res.data.features.length); // 如果这里是 1，说明后端 SQL 依然没 JOIN 到中间数据
-    console.log(JSON.stringify(res.data).length)
-    console.log(res.data)
     routeLayer.getSource().clear();
-
     // 强制刷新渲染
     const geojsonFormat = new GeoJSON();
     const features = geojsonFormat.readFeatures(res.data, {
@@ -439,7 +539,6 @@ async function toggleTerrain() {
 }
 function preload3DBuildings(geojsonData) {
   if (buildDataSource) return;
-
   const scene = ol3d.getCesiumScene();
   if (!scene) return;
 
@@ -818,5 +917,30 @@ button { cursor: pointer; padding: 4px 8px; }
   z-index: 1000;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
+.info-tooltip {
+  position: absolute;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 4px;
+  pointer-events: none; /* 确保鼠标不会挡住拾取 */
+  max-width: 300px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border: 1px solid #555;
+}
 
+.tooltip-header {
+  border-bottom: 1px solid #666;
+  padding-bottom: 5px;
+  margin-bottom: 5px;
+  font-weight: bold;
+  color: #00d2ff;
+}
+
+.tooltip-body div {
+  margin: 3px 0;
+  word-break: break-all;
+}
 </style>
