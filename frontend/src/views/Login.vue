@@ -1,12 +1,15 @@
 <template>
   <div class="login-container">
+  <header class="top-header">
+        <h1>沈阳市空间数据管理WebGIS系统的设计与实现</h1>
+      </header>
     <div class="login-box">
 
       <!-- 标题 -->
       <div class="sys-header">
         <div style="font-size: 40px; margin-bottom: 10px;">🌍</div>
-        <h2 class="sys-title">沈阳市空间数据管理WebGIS系统的设计与实现</h2>
-        <p class="sys-subtitle">Shenyang 3D WebGIS Analysis System</p>
+        <h2 class="sys-title">沈阳市空间数据WebGIS管理系统的设计与实现</h2>
+        <p class="sys-subtitle">Design and Implementation of Shenyang City Spatial Data WebGIS Management System</p>
       </div>
 
       <!-- 表单 -->
@@ -69,26 +72,25 @@ import axios from 'axios'
 
 const router = useRouter()
 
-// 状态
+// 状态控制
 const isRegister = ref(false)
 const isLoading = ref(false)
 
-// 表单
+// 表单数据：使用 reactive
 const form = reactive({
   username: '',
   password: '',
-  nickname: ''
+  nickname: '' // 注册时使用的字段
 })
 
-// 切换登录/注册
+// 切换登录/注册模式
 const toggleMode = () => {
   isRegister.value = !isRegister.value
 }
 
-// 提交
+// 提交表单
 const handleSubmit = async () => {
-
-  // 基础校验
+  // 1. 基础校验
   if (!form.username || !form.password) {
     alert('请输入用户名和密码')
     return
@@ -102,34 +104,40 @@ const handleSubmit = async () => {
   isLoading.value = true
 
   try {
-
     const url = isRegister.value
       ? 'http://localhost:8082/user/register'
       : 'http://localhost:8082/user/login'
 
+    // 注意：这里 form 本身就是响应式对象，直接传给 axios
     const res = await axios.post(url, form)
 
-    if (res.data.code === 200) {
+    // 假设后端成功返回 code 为 200
+    if (res.data === 'Login successful' || res.data.code === 200 || res.data === 'User registered successfully') {
 
-      // 注册逻辑
       if (isRegister.value) {
         alert('注册成功，请登录')
         isRegister.value = false
-      }
-      // 登录逻辑
-      else {
-        localStorage.setItem('user', JSON.stringify(res.data.data))
-        alert('登录成功')
-        router.push('/map')
-      }
+      } else {
+        // --- 核心修改：保存登录信息到浏览器缓存 ---
+        // 这样 MapView 页面才能通过 localStorage.getItem('username') 拿到它
+        localStorage.setItem('username', form.username);
 
+        // 如果后端返回了完整的用户信息，也可以一起存入
+        if (res.data.data) {
+          localStorage.setItem('user', JSON.stringify(res.data.data));
+        }
+
+        alert('登录成功')
+        router.push('/map') // 跳转到地图页面
+      }
     } else {
-      alert(res.data.msg)
+      // 显示后端返回的错误消息
+      alert(res.data.msg || res.data || '操作失败')
     }
 
   } catch (err) {
-    console.error(err)
-    alert('服务器异常')
+    console.error('请求异常:', err)
+    alert('服务器连接异常，请检查后端服务是否开启')
   } finally {
     isLoading.value = false
   }
@@ -230,5 +238,26 @@ const handleSubmit = async () => {
 
 .link:hover {
   text-decoration: underline;
+}
+.top-header {
+  position: absolute; /* 关键：脱离文档流 */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 60px;
+  /* 使用与 MapView 一致的渐变色 */
+  background: linear-gradient(90deg, #071222 0%, #112a4a 100%);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  z-index: 10;
+}
+
+.top-header h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 1px;
 }
 </style>
