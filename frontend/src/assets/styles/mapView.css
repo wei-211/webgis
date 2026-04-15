@@ -1,0 +1,420 @@
+/* 1. 清除浏览器默认的内外边距 */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden; /* 防止出现多余的滚动条 */
+}
+
+/* 2. 把高度改成 100vh 撑满全屏 */
+.layout-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh; /* 从 98vh 改为 100vh！ */
+  width: 100vw;
+  background-color: #0b1426;
+  font-family: "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+}
+
+/* ====== 顶部导航栏 ====== */
+.top-header {
+  height: 60px;
+  background: linear-gradient(90deg, #071222 0%, #112a4a 100%);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  z-index: 10;
+}
+
+.logo-title h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 1px;
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.toggle-mode-btn {
+  background-color: #1890ff;
+  border: none;
+  color: white;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.3s;
+}
+.toggle-mode-btn:hover { background-color: #40a9ff; }
+
+.user-info { display: flex; align-items: center; gap: 8px; font-size: 14px;}
+
+/* ====== 主体分栏 ====== */
+.main-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ====== 左侧菜单栏 ====== */
+.sidebar {
+  width: 280px;
+  background-color: #0d1e35;
+  border-right: 1px solid #1e3a5f;
+  display: flex;
+  flex-direction: column;
+  color: #fff;
+  z-index: 9;
+}
+
+/* 1. 搜索框 */
+.search-section {
+  padding: 15px;
+  background-color: #071222;
+}
+.search-box {
+  display: flex;
+  background-color: #112238;
+  border: 1px solid #1e3a5f;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.search-box input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: white;
+  padding: 8px 12px;
+  outline: none;
+}
+.search-box button {
+  background: transparent;
+  border: none;
+  color: #40a9ff;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+/* 2. 滚动菜单区域 */
+.menu-container {
+  flex: 1;
+  overflow-y: auto;
+}
+.menu-container::-webkit-scrollbar { width: 6px; }
+.menu-container::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+
+.menu-group {
+  border-bottom: 1px solid #142944;
+}
+
+.group-title {
+  padding: 12px 15px;
+  background-color: #0b1426;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 15px;
+  font-weight: bold;
+  color: #a3c2e0;
+}
+.group-title:hover { background-color: #163255; }
+.arrow { font-size: 12px; transition: transform 0.3s; }
+.arrow.open { transform: rotate(180deg); }
+
+.group-content {
+  padding: 10px 15px;
+  background-color: #0d1e35;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 勾选项 (二维图层) */
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: #8da4c0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+.layer-item:hover { background-color: #163255; color: white; }
+.layer-item.active { color: #40a9ff; font-weight: bold; }
+.layer-item input[type="checkbox"] { cursor: pointer; }
+
+/* 按钮项 (功能分析) */
+.func-btn {
+  background: #163255;
+  border: 1px solid #234570;
+  color: #ccd6f6;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  transition: 0.3s;
+}
+.func-btn:hover { background: #1890ff; color: white; border-color: #1890ff; }
+.func-btn.active { border-color: #1890ff; color: #1890ff; }
+.tool-flex { flex-direction: row; }
+.func-btn.half { flex: 1; text-align: center; }
+
+/* 三维工具面板滑块 */
+.tool-item {
+  background: #0b1426;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #8892b0;
+  margin-top: 5px;
+  border: 1px solid #1e3a5f;
+}
+.tool-item label { display: block; margin-bottom: 8px; }
+.tool-item input[type="range"] { width: 100%; margin-bottom: 10px; cursor: pointer;}
+.sub-btn {
+  width: 100%;
+  background: #1890ff;
+  border: none;
+  color: white;
+  padding: 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.sub-btn:hover { background: #40a9ff; }
+
+/* ====== 右侧地图区 ====== */
+.map-wrapper {
+  flex: 1;
+  position: relative;
+  background: #000; /* 黑色背景提升三维地球视觉效果 */
+}
+
+.full-map {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- 工具与定位栏 --- */
+.map-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1000;
+}
+
+.map-controls button {
+  width: 36px;
+  height: 36px;
+  background-color: rgba(11, 26, 46, 0.85);
+  color: #40a9ff;
+  border: 1px solid #1e3a5f;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.3s;
+}
+
+.map-controls button:hover {
+  background-color: #1890ff;
+  color: white;
+}
+
+/* 鼠标坐标悬浮窗 */
+.mouse-coord {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(11, 26, 46, 0.85);
+  color: #40a9ff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid #1e3a5f;
+  font-size: 13px;
+  pointer-events: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  z-index: 1000;
+}
+
+/* 属性面板悬浮窗 */
+.info-tooltip {
+  position: absolute;
+  z-index: 2000;
+  background: rgba(11, 26, 46, 0.9);
+  color: #ccd6f6;
+  padding: 12px;
+  border-radius: 4px;
+  pointer-events: none;
+  max-width: 300px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border: 1px solid #1890ff;
+}
+
+.tooltip-header {
+  border-bottom: 1px solid #1e3a5f;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #1890ff;
+}
+
+.tooltip-body div {
+  margin: 4px 0;
+  word-break: break-all;
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.logout-link {
+  color: #ff4d4f; /* 红色警告色 */
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline; /* 下划线提示可点击 */
+  margin-left: 5px;
+  transition: 0.3s;
+}
+
+.logout-link:hover {
+  color: #ff7875;
+}
+/* ====== 新增：底部查询结果面板样式 ====== */
+.result-panel {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 60%;
+  min-width: 600px;
+  background-color: #fff;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #333;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e8e8e8;
+  background-color: #fafafa;
+}
+
+.tab {
+  padding: 10px 20px;
+  font-weight: bold;
+  color: #1890ff;
+  border-bottom: 2px solid #1890ff;
+  background-color: #fff;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  padding-right: 15px;
+  gap: 15px;
+}
+
+.total-count {
+  font-size: 13px;
+  color: #666;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+}
+.close-btn:hover { color: #ff4d4f; }
+
+.panel-content {
+  padding: 10px;
+  background-color: #fff;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.data-table th, .data-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.data-table th {
+  background-color: #fafafa;
+  color: #666;
+  font-weight: 600;
+}
+
+.data-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.data-table tbody tr:hover { background-color: #f5f5f5; }
+.data-table tbody tr.active { background-color: #e6f7ff; }
+
+.locate-btn {
+  background-color: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.locate-btn:hover { background-color: #40a9ff; }
+
+.panel-pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 10px 15px;
+  background-color: #fafafa;
+  border-top: 1px solid #e8e8e8;
+  gap: 10px;
+}
+
+.panel-pagination button {
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.panel-pagination button:disabled {
+  background: #f5f5f5;
+  color: #b8b8b8;
+  cursor: not-allowed;
+}
+
+.page-info { font-size: 13px; color: #666; }

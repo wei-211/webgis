@@ -21,7 +21,13 @@ public class AccessibilityRepository {
             jsonb_build_object(
               'type','Feature',
               'geometry', CAST(ST_AsGeoJSON(geom) AS jsonb),
-              'properties', to_jsonb(p) - 'geom'
+              -- 修改这里：使用 || 将 distance 合并进 properties 对象中
+              'properties', (to_jsonb(p) - 'geom') || jsonb_build_object(
+                  'distance', ST_Distance(
+                      CAST(geom AS geography),
+                      CAST(ST_SetSRID(ST_MakePoint(?, ?), 4326) AS geography)
+                  )
+              )
             )
           )
         )
@@ -34,8 +40,9 @@ public class AccessibilityRepository {
         """;
 
         return jdbcTemplate.queryForObject(
-                sql, String.class, lon, lat, radius
+                sql,
+                String.class,
+                lon, lat, lon, lat, radius
         );
     }
 }
-

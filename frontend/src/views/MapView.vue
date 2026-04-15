@@ -18,20 +18,7 @@
 
     <div class="main-body">
       <aside class="sidebar">
-        <div class="search-section">
-          <div class="search-box">
-            <input
-              type="text"
-              v-model="searchQuery"
-              @keyup.enter="handleSearch"
-              placeholder="搜索道路/建筑/设施..."
-            />
-            <button @click="handleSearch">🔍</button>
-          </div>
-        </div>
-
         <div class="menu-container">
-
           <div class="menu-group">
             <div class="group-title" @click="openData = !openData">
               <span>🗺️ 数据图层</span>
@@ -111,7 +98,23 @@
               <button class="func-btn half" @click="startMeasure('Polygon')">测面积</button>
             </div>
           </div>
-
+          <div class="menu-group">
+               <div class="group-title" @click="openSearch = !openSearch">
+                <span>🔍 空间查询</span>
+                <span class="arrow" :class="{ open: openSearch }">▼</span>
+               </div>
+                <div class="group-content" v-show="openSearch">
+                   <div class="search-box">
+                        <input
+                          type="text"
+                          v-model="searchQuery"
+                          @keyup.enter="handleSearch"
+                          placeholder="查询道路/建筑/设施..."
+                        />
+                      <button class="search-btn" @click="handleSearch">查询</button>
+                   </div>
+               </div>
+          </div>
         </div>
       </aside>
 
@@ -128,13 +131,15 @@
         <div id="mouse-position" class="mouse-coord"></div>
 
         <div ref="infoTooltip" class="info-tooltip" v-show="tooltipData.show" :style="tooltipStyle">
-          <div class="tooltip-header">属性信息</div>
-          <div class="tooltip-body">
-            <div v-for="(val, key) in tooltipData.properties" :key="key">
-              <strong>{{ key }}:</strong> {{ val }}
+            <div class="tooltip-header">图层数据信息</div>
+               <div class="tooltip-body">
+                  <template v-for="(val, key) in tooltipData.properties" :key="key">
+                      <div v-if="formatPropertyValue(key, val) !== '-'">
+                          <strong>{{ FRIENDLY_KEYS[key] || key }}:</strong> {{ formatPropertyValue(key, val) }}
+                      </div>
+                  </template>
+               </div>
             </div>
-          </div>
-        </div>
       </main>
       <div class="result-panel" v-show="showResultPanel">
       <div class="panel-header">
@@ -146,14 +151,13 @@
           <button class="close-btn" @click="showResultPanel = false">✖</button>
           </div>
         </div>
-
         <div class="panel-content">
-<table class="data-table">
+          <table class="data-table">
             <thead>
               <tr>
                 <th>序号</th>
                 <th>要素名称</th>
-                <th>要素类型</th>
+                <th>来源图层</th>
                 <th>占地面积</th>
                 <th>核心指标</th>
                 <th>操作</th>
@@ -176,14 +180,15 @@
               </tr>
             </tbody>
           </table>
-              </div>
-
-              <div class="panel-pagination">
-                <span class="page-info">第 {{ currentPage }} / {{ totalPages || 1 }} 页</span>
-                <button :disabled="currentPage === 1" @click="currentPage--">上一页</button>
-                <button :disabled="currentPage === totalPages || totalPages === 0" @click="currentPage++">下一页</button>
-              </div>
-            </div>
+        </div>
+            <div class="panel-content">
+                  <table class="data-table"></table></div>
+                  <div class="panel-pagination" v-if="totalPages > 1">
+                  <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页</span>
+                  <button :disabled="currentPage === 1" @click="currentPage--">上一页</button>
+                  <button :disabled="currentPage === totalPages" @click="currentPage++">下一页</button>
+             </div>
+      </div>
     </div>
   </div>
 
@@ -215,6 +220,8 @@ import { fetchAccessiblePois } from '@/api/accessibility'
 import { fetchPresetRoute } from '@/api/routing'
 import { layers as configLayers } from '@/config/layers'
 import { loadLayer } from '@/api/layerApi'
+import { FRIENDLY_KEYS, formatPropertyValue, getLayerLabel, safeParseProps, getDynamicMetric } from '@/utils/gisUtils';
+import '@/assets/styles/mapView.css';
 
 window.Cesium = Cesium
 window.CESIUM_BASE_URL = '/Cesium/';
@@ -224,8 +231,8 @@ const searchQuery = ref('');
 const openData = ref(false);
 const openFunc = ref(false);
 const open3D = ref(false);
-const openTools = ref(true);
-
+const openTools = ref(false);
+const openSearch = ref(true);
 // 动态计算图层列表
 const layerList = reactive(configLayers.map(l => ({ ...l, visible: l.active || false })));
 const dataLayers = computed(() => layerList.filter(l => l.type === 'business' || l.type === 'display'));
@@ -259,41 +266,6 @@ const handleLogout = () => {
     router.push('/login'); // 返回登录页面
   }
 };
-const friendlyKeys = {
-  fclass: '要素类别',
-  code: '分类代码',
-  height: '建筑高度 (m)',
-  population: '常住人口',
-  type: '功能类型',
-  osm_id: '原始编号',
-  width: '河道宽度'
-};
-
-// 2. 辅助函数：格式化显示内容
-const formatValue = (key, value) => {
-  if (key === 'population') return value > 0 ? `${value.toLocaleString()} 人` : '暂无数据';
-  if (key === 'height') return `${value} 米`;
-  return value;
-};
-
-const getLayerLabel = (tableName) => {
-  if (!tableName) return '地理要素';
-  const name = tableName.toLowerCase();
-
-  if (name.includes('build')) return '城市建筑';
-  if (name.includes('landuse')) return '土地分类';
-  if (name.includes('natural')) return '自然景观';
-  if (name.includes('places')) return '行政区域';
-  if (name.includes('pofw')) return '标志物';
-  if (name.includes('pois')) return '兴趣点';
-  if (name.includes('traffic')) return '交通设施';
-  if (name.includes('transport')) return '交通枢纽';
-  if (name.includes('water')) return '水系河流';
-  if (name.includes('road')) return '道路交通';
-
-  return '地理要素';
-};
-
 const showResultPanel = ref(false);
 const searchResults = ref([]);
 const currentPage = ref(1);
@@ -305,57 +277,6 @@ const paginatedResults = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;
   return searchResults.value.slice(start, start + pageSize.value);
 });
-
-// 解析后端的 properties JSON 字符串
-const getProp = (item, key) => {
-  if (item.properties) {
-    try {
-      const props = typeof item.properties === 'string' ? JSON.parse(item.properties) : item.properties;
-      return props[key] || '-';
-    } catch (e) {
-      return '-';
-    }
-  }
-  return '-';
-};
-const safeParseProps = (props) => {
-  if (!props || props === 'undefined') return {};
-  if (typeof props === 'object') return props; // 防止已经是对象
-
-  try {
-    return JSON.parse(props);
-  } catch (e) {
-    console.warn('无法解析 properties JSON:', props);
-    return {};
-  }
-};
-const getDynamicMetric = (item) => {
-  const props = safeParseProps(item.properties);
-
-  // 1. 检查是否有 population (常住人口) —— 适用于行政区、小区
-  if (props.population !== undefined && props.population !== null && props.population !== '') {
-    return `常住人口: ${props.population} 人`;
-  }
-  // 2. 检查是否有 students (在校生人数) —— 适用于大学、中小学、幼儿园 (新增这部分)
-  if (props.students !== undefined && props.students !== null && props.students !== '') {
-    return `在校生: ${props.students} 人`;
-  }
-  // 3. 检查是否有 capacity (可容纳人数) —— 适用于公园、车站
-  if (props.capacity !== undefined && props.capacity !== null && props.capacity !== '') {
-      // 自动识别单位：加油站、充电站、停车场显示“辆车”
-      if (item.name && (item.name.includes('加油') || item.name.includes('充电') || item.name.includes('停车'))) {
-        return `可容纳: ${props.capacity} 辆车`;
-      }
-      // 其他（公园、车站等）显示“人”
-      return `可容纳: ${props.capacity} 人`;
-    }
-  // 4. 检查是否有 beds (床位数) —— 适用于医院
-  if (props.beds !== undefined && props.beds !== null && props.beds !== '') {
-    return `床位: ${props.beds} 张`;
-  }
-  // 如果数据库里没有这些特殊字段，就返回 -
-  return '-';
-};
 
 const infoTooltip = ref(null)
 const tooltipData = reactive({
@@ -477,28 +398,34 @@ onMounted(async () => {
 
       const centerFeat = new Feature({ geometry: new Point(coord) })
       centerFeat.setStyle(pointStyle)
-
+      centerFeat.set('名称', '查询中心点');
+      centerFeat.set('isAnalysis', true);
       const poiFeats = new GeoJSON().readFeatures(res.data, {
         dataProjection: 'EPSG:4326',
         featureProjection: 'EPSG:3857'
       })
-
+      poiFeats.forEach(f => f.set('isAnalysis', true));
       source.addFeatures([circleFeat, centerFeat, ...poiFeats])
       return
     }
 
-    // ===== ② 最近邻 POI =====
-    if (functionState.value['knn-poi']) {
+      // ===== ② 最近邻 POI =====
+      if (functionState.value['knn-poi']) {
       const res = await fetch(
-        `http://localhost:8082/api/analysis/nearest-poi?lon=${lon}&lat=${lat}`
+        `/api/analysis/nearest-poi?lon=${lon}&lat=${lat}`
       )
       const geojson = await res.json()
-
-      poiLayer.getSource().clear()
+      const source = poiLayer.getSource()
+      source.clear()
+      const centerFeat = new Feature({ geometry: new Point(coord) })
+      centerFeat.set('名称', '查询中心点');
+      centerFeat.set('isAnalysis', true);
+      centerFeat.setStyle(pointStyle)
       const feats = new GeoJSON().readFeatures(geojson, {
         featureProjection: 'EPSG:3857'
       })
-      poiLayer.getSource().addFeatures(feats)
+      feats.forEach(f => f.set('isAnalysis', true));
+      source.addFeatures([centerFeat, ...feats])
       return
     }
   })
@@ -567,24 +494,30 @@ onMounted(async () => {
     if (is3D.value) return;
 
     if (highlightFeature) {
+    if (!highlightFeature.get('isAnalysis')) {
       highlightFeature.setStyle(undefined);
-      highlightFeature = null;
     }
+    highlightFeature = null;
+  }
 
     const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
 
     if (feature) {
       highlightFeature = feature;
+      if (!feature.get('isAnalysis')) {
       feature.setStyle(new Style({
         stroke: new Stroke({ color: '#00ffff', width: 3 }),
         fill: new Fill({ color: 'rgba(0, 255, 255, 0.3)' })
       }));
+    }
 
       tooltipData.show = true;
       tooltipData.x = evt.pixel[0];
       tooltipData.y = evt.pixel[1];
-      tooltipData.properties = feature.getProperties();
-      delete tooltipData.properties.geometry;
+      const props = { ...feature.getProperties() };
+      delete props.geometry;
+      delete props.isAnalysis; // 隐藏我们的内部标记
+      tooltipData.properties = props;
 
       map.getTargetElement().style.cursor = 'pointer';
     } else {
@@ -1131,415 +1064,4 @@ function locateMe() { map.getView().animate({ center: [13741313, 5130280], zoom:
 </script>
 
 <style scoped>
-/* ====== 布局重置 ====== */
-.layout-container {
-  display: flex;
-  flex-direction: column;
-  height: 98vh;
-  width: 100vw;
-  background-color: #0b1426;
-  font-family: "Microsoft YaHei", sans-serif;
-  overflow: hidden;
-}
-
-/* ====== 顶部导航栏 ====== */
-.top-header {
-  height: 60px;
-  background: linear-gradient(90deg, #071222 0%, #112a4a 100%);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 20px;
-  color: white;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-  z-index: 10;
-}
-
-.logo-title h1 {
-  font-size: 18px;
-  margin: 0;
-  letter-spacing: 1px;
-}
-
-.user-actions {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.toggle-mode-btn {
-  background-color: #1890ff;
-  border: none;
-  color: white;
-  padding: 6px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: background-color 0.3s;
-}
-.toggle-mode-btn:hover { background-color: #40a9ff; }
-
-.user-info { display: flex; align-items: center; gap: 8px; font-size: 14px;}
-
-/* ====== 主体分栏 ====== */
-.main-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-/* ====== 左侧菜单栏 ====== */
-.sidebar {
-  width: 280px;
-  background-color: #0d1e35;
-  border-right: 1px solid #1e3a5f;
-  display: flex;
-  flex-direction: column;
-  color: #fff;
-  z-index: 9;
-}
-
-/* 1. 搜索框 */
-.search-section {
-  padding: 15px;
-  background-color: #071222;
-}
-.search-box {
-  display: flex;
-  background-color: #112238;
-  border: 1px solid #1e3a5f;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.search-box input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: white;
-  padding: 8px 12px;
-  outline: none;
-}
-.search-box button {
-  background: transparent;
-  border: none;
-  color: #40a9ff;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-/* 2. 滚动菜单区域 */
-.menu-container {
-  flex: 1;
-  overflow-y: auto;
-}
-.menu-container::-webkit-scrollbar { width: 6px; }
-.menu-container::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
-
-.menu-group {
-  border-bottom: 1px solid #142944;
-}
-
-.group-title {
-  padding: 12px 15px;
-  background-color: #0b1426;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 15px;
-  font-weight: bold;
-  color: #a3c2e0;
-}
-.group-title:hover { background-color: #163255; }
-.arrow { font-size: 12px; transition: transform 0.3s; }
-.arrow.open { transform: rotate(180deg); }
-
-.group-content {
-  padding: 10px 15px;
-  background-color: #0d1e35;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 勾选项 (二维图层) */
-.layer-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  color: #8da4c0;
-  padding: 6px 8px;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-.layer-item:hover { background-color: #163255; color: white; }
-.layer-item.active { color: #40a9ff; font-weight: bold; }
-.layer-item input[type="checkbox"] { cursor: pointer; }
-
-/* 按钮项 (功能分析) */
-.func-btn {
-  background: #163255;
-  border: 1px solid #234570;
-  color: #ccd6f6;
-  padding: 8px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  text-align: left;
-  transition: 0.3s;
-}
-.func-btn:hover { background: #1890ff; color: white; border-color: #1890ff; }
-.func-btn.active { border-color: #1890ff; color: #1890ff; }
-.tool-flex { flex-direction: row; }
-.func-btn.half { flex: 1; text-align: center; }
-
-/* 三维工具面板滑块 */
-.tool-item {
-  background: #0b1426;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  color: #8892b0;
-  margin-top: 5px;
-  border: 1px solid #1e3a5f;
-}
-.tool-item label { display: block; margin-bottom: 8px; }
-.tool-item input[type="range"] { width: 100%; margin-bottom: 10px; cursor: pointer;}
-.sub-btn {
-  width: 100%;
-  background: #1890ff;
-  border: none;
-  color: white;
-  padding: 6px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.sub-btn:hover { background: #40a9ff; }
-
-/* ====== 右侧地图区 ====== */
-.map-wrapper {
-  flex: 1;
-  position: relative;
-  background: #000; /* 黑色背景提升三维地球视觉效果 */
-}
-
-.full-map {
-  width: 100%;
-  height: 100%;
-}
-
-/* --- 工具与定位栏 --- */
-.map-controls {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 1000;
-}
-
-.map-controls button {
-  width: 36px;
-  height: 36px;
-  background-color: rgba(11, 26, 46, 0.85);
-  color: #40a9ff;
-  border: 1px solid #1e3a5f;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: 0.3s;
-}
-
-.map-controls button:hover {
-  background-color: #1890ff;
-  color: white;
-}
-
-/* 鼠标坐标悬浮窗 */
-.mouse-coord {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  background: rgba(11, 26, 46, 0.85);
-  color: #40a9ff;
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: 1px solid #1e3a5f;
-  font-size: 13px;
-  pointer-events: none;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.5);
-  z-index: 1000;
-}
-
-/* 属性面板悬浮窗 */
-.info-tooltip {
-  position: absolute;
-  z-index: 2000;
-  background: rgba(11, 26, 46, 0.9);
-  color: #ccd6f6;
-  padding: 12px;
-  border-radius: 4px;
-  pointer-events: none;
-  max-width: 300px;
-  font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  border: 1px solid #1890ff;
-}
-
-.tooltip-header {
-  border-bottom: 1px solid #1e3a5f;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  font-weight: bold;
-  color: #1890ff;
-}
-
-.tooltip-body div {
-  margin: 4px 0;
-  word-break: break-all;
-}
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 14px;
-}
-
-.logout-link {
-  color: #ff4d4f; /* 红色警告色 */
-  cursor: pointer;
-  font-size: 12px;
-  text-decoration: underline; /* 下划线提示可点击 */
-  margin-left: 5px;
-  transition: 0.3s;
-}
-
-.logout-link:hover {
-  color: #ff7875;
-}
-/* ====== 新增：底部查询结果面板样式 ====== */
-.result-panel {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  width: 60%;
-  min-width: 600px;
-  background-color: #fff;
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-  z-index: 2000;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  color: #333;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #e8e8e8;
-  background-color: #fafafa;
-}
-
-.tab {
-  padding: 10px 20px;
-  font-weight: bold;
-  color: #1890ff;
-  border-bottom: 2px solid #1890ff;
-  background-color: #fff;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  padding-right: 15px;
-  gap: 15px;
-}
-
-.total-count {
-  font-size: 13px;
-  color: #666;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  color: #999;
-  cursor: pointer;
-}
-.close-btn:hover { color: #ff4d4f; }
-
-.panel-content {
-  padding: 10px;
-  background-color: #fff;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  text-align: left;
-}
-
-.data-table th, .data-table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.data-table th {
-  background-color: #fafafa;
-  color: #666;
-  font-weight: 600;
-}
-
-.data-table tbody tr {
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.data-table tbody tr:hover { background-color: #f5f5f5; }
-.data-table tbody tr.active { background-color: #e6f7ff; }
-
-.locate-btn {
-  background-color: #1890ff;
-  color: white;
-  border: none;
-  border-radius: 3px;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.locate-btn:hover { background-color: #40a9ff; }
-
-.panel-pagination {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 10px 15px;
-  background-color: #fafafa;
-  border-top: 1px solid #e8e8e8;
-  gap: 10px;
-}
-
-.panel-pagination button {
-  border: 1px solid #d9d9d9;
-  background: #fff;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.panel-pagination button:disabled {
-  background: #f5f5f5;
-  color: #b8b8b8;
-  cursor: not-allowed;
-}
-
-.page-info { font-size: 13px; color: #666; }
 </style>
