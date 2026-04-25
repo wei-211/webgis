@@ -25,6 +25,7 @@ public interface KnnPoisRepository extends JpaRepository<Pois, Long> {
             )
         )
         FROM pois
+        WHERE fclass IN ('hospital', 'clinic','pharmacy', 'chemist')
         ORDER BY geom <-> ST_SetSRID(ST_MakePoint(?1, ?2),4326)
         LIMIT 1
         """, nativeQuery = true)

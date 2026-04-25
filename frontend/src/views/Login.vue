@@ -1,15 +1,15 @@
 <template>
   <div class="login-container">
   <header class="top-header">
-        <h1>沈阳市空间数据管理WebGIS系统的设计与实现</h1>
+        <h1>沈阳市空间数据管理系统</h1>
       </header>
     <div class="login-box">
 
       <!-- 标题 -->
       <div class="sys-header">
         <div style="font-size: 40px; margin-bottom: 10px;">🌍</div>
-        <h2 class="sys-title">沈阳市空间数据WebGIS管理系统的设计与实现</h2>
-        <p class="sys-subtitle">Design and Implementation of Shenyang City Spatial Data WebGIS Management System</p>
+        <h2 class="sys-title">沈阳市空间数据管理系统</h2>
+        <p class="sys-subtitle">Shenyang City Spatial Data  Management System</p>
       </div>
 
       <!-- 表单 -->
@@ -151,13 +151,16 @@ const handleSubmit = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  background-image: url('@/assets/styles/DLU.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .login-box {
   width: 420px;
   padding: 40px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(10px);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);

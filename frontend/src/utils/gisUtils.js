@@ -39,7 +39,14 @@ export const FRIENDLY_KEYS = {
   target: '终点节点编号',
   length_m: '道路长度',
   calc_area: '占地面积',
-  source_table: '数据来源表'
+  source_table: '数据来源表',
+  //天气
+  temp: '温度',
+  text: '天气状况',
+  windDir: '风向',
+  windScale: '风力级别',
+  humidity: '相对湿度',
+  pressure: '大气压强'
 };
 
 // 2. 要素分类值映射 (fclass 细分)
@@ -174,4 +181,47 @@ export const getDynamicMetric = (item) => {
     return `床位: ${props.beds} 张`;
   }
   return '-';
+};
+/**
+ * 5. 按沈阳市行政区分组图层数据
+ * @param {Array} layers - 扁平化的图层数组
+ * @returns {Array} - 分组后的树形结构数组
+ */
+export const groupLayersByDistrict = (layers) => {
+  // 严格按照沈阳市行政区划初始化分组
+  const groups = {
+    '沈阳市通用图层': [],
+    '和平区': [],
+    '沈河区': [],
+    '大东区': [],
+    '皇姑区': [],
+    '铁西区': [],
+    '苏家屯区': [],
+    '浑南区': [],
+    '沈北新区': [],
+    '于洪区': [],
+    '辽中区': [],
+    '新民市': [],
+    '康平县': [],
+    '法库县': []
+  };
+
+  layers.forEach(layer => {
+    // 读取图层配置中的 district 字段，如果没有写，默认放进“全市通用”
+    const dist = layer.district || '沈阳市通用图层';
+
+    if (groups[dist]) {
+      groups[dist].push(layer);
+    } else {
+      groups['沈阳市通用图层'].push(layer); // 容错处理
+    }
+  });
+
+  // 过滤掉当前没有分配图层的区，并格式化为前端需要的对象数组
+  return Object.keys(groups)
+    .filter(key => groups[key].length > 0)
+    .map(key => ({
+      name: key,
+      layers: groups[key],
+    }));
 };
